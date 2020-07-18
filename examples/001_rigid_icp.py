@@ -38,7 +38,6 @@ if __name__ == '__main__':
     pose = bnp.rotation2np(source)
     pose = bnp.normalize_axis_angle(pose)
     pose = pose[:, 0] * pose[:, 1:4]
-
     init_pose = torch.tensor(pose).view(1, -1).to(device).detach().requires_grad_(True)
     print("Initial rotation: ", init_trans)
 
@@ -47,20 +46,21 @@ if __name__ == '__main__':
     init_scale = torch.tensor(scale).view(1, -1).to(device).detach().requires_grad_(True)
     print("Initial scale: ", init_scale)
 
-    source_vertices = torch.tensor(bnp.obj2np(source, as_homogeneous=True)).view(-1, 1, 4).to(device)
+    verts = bnp.obj2np(source, is_local=True)
+
+    source_vertices = torch.tensor(bnp.obj2np(source, is_local=True, as_homogeneous=True).astype(np.float32)).view(-1, 1, 4).to(device)
     target_vertices = torch.tensor(bnp.obj2np(target, as_homogeneous=True)).view(-1, 1, 4).to(device)
     print("Source vertices: ", source_vertices.shape)
     print("Target vertices: ", target_vertices.shape)
 
-    epochs = 2000
+    epochs = 1000
     lr = 0.1
     verbose = epochs / 10
-    esr = 200
+    esr = 100
     current = 0
 
     loss_fn = torch.nn.MSELoss()
-    # optimizer = torch.optim.Adam([init_trans, init_pose, init_scale], lr=lr)
-    optimizer = torch.optim.Adam([init_trans], lr=lr)
+    optimizer = torch.optim.Adam([init_trans, init_pose, init_scale], lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min")
     best_loss = 10000
     best_trans = np.zeros([0, 0, 0])
@@ -92,4 +92,7 @@ if __name__ == '__main__':
         torch.cuda.empty_cache()
 
     optimized_source = bpy.context.scene.objects["OptimizedSource"]
-    optimized_source.location = (trans[0] + best_trans[0], trans[1] + best_trans[1], trans[2] + best_trans[2])
+    optimized_source.location = (best_trans[0], best_trans[1], best_trans[2])
+    norm = np.sqrt(best_pose[0] ** 2 + best_pose[1] ** 2 + best_pose[2] ** 2)
+    optimized_source.rotation_axis_angle = (norm, best_pose[0], best_pose[1], best_pose[2])
+    optimized_source.scale = (best_scale[0], best_scale[1], best_scale[2])
