@@ -53,9 +53,9 @@ if __name__ == '__main__':
     print("Source vertices: ", source_vertices.shape)
     print("Target vertices: ", target_vertices.shape)
 
-    epochs = 1000
+    epochs = 600
     lr = 0.1
-    verbose = epochs / 10
+    verbose = 100
     esr = 100
     current = 0
 
