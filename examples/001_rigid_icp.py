@@ -1,4 +1,5 @@
 import bpy
+import numpy as np
 import torch
 import sys
 from pathlib import Path
@@ -21,19 +22,74 @@ if __name__ == '__main__':
     # Source
     source = bpy.context.scene.objects["Source"]
     bnp.change_rotation_mode(source, "AXIS_ANGLE")
-    source_vertices = bnp.obj2np(source, as_homogeneous=True)
-    source_location = bnp.location2np(source)
-    print("Source vertices: ", source_vertices.shape)
-    print("Source location", source_location)
 
     # Target
     target = bpy.context.scene.objects["Target"]
     bnp.change_rotation_mode(target, "AXIS_ANGLE")
-    target_vertices = bnp.obj2np(target, as_homogeneous=True)
-    target_location = bnp.location2np(target)
-    print("Target vertices: ", target_vertices.shape)
-    print("Target location", target_location)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    init_trans = torch.tensor(source_location, requires_grad=True).to(device)
-    print("Initial translation", init_trans)
+
+    # translation
+    trans = bnp.location2np(source)
+    init_trans = torch.tensor(trans).view(1, -1).to(device).detach().requires_grad_(True)
+    print("Initial translation: ", init_trans)
+
+    # rotation
+    pose = bnp.rotation2np(source)
+    pose = bnp.normalize_axis_angle(pose)
+    pose = pose[:, 0] * pose[:, 1:4]
+
+    init_pose = torch.tensor(pose).view(1, -1).to(device).detach().requires_grad_(True)
+    print("Initial rotation: ", init_trans)
+
+    # scale
+    scale = bnp.scale2np(source)
+    init_scale = torch.tensor(scale).view(1, -1).to(device).detach().requires_grad_(True)
+    print("Initial scale: ", init_scale)
+
+    source_vertices = torch.tensor(bnp.obj2np(source, as_homogeneous=True)).view(-1, 1, 4).to(device)
+    target_vertices = torch.tensor(bnp.obj2np(target, as_homogeneous=True)).view(-1, 1, 4).to(device)
+    print("Source vertices: ", source_vertices.shape)
+    print("Target vertices: ", target_vertices.shape)
+
+    epochs = 2000
+    lr = 0.1
+    verbose = epochs / 10
+    esr = 200
+    current = 0
+
+    loss_fn = torch.nn.MSELoss()
+    # optimizer = torch.optim.Adam([init_trans, init_pose, init_scale], lr=lr)
+    optimizer = torch.optim.Adam([init_trans], lr=lr)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min")
+    best_loss = 10000
+    best_trans = np.zeros([0, 0, 0])
+    for epoch in range(epochs):
+        optimizer.zero_grad()
+        rigid_trans = btorch.rigid_transform(init_trans, init_pose, init_scale).transpose(1, 2)
+        loss = loss_fn(source_vertices @ rigid_trans, target_vertices)
+
+        if loss < best_loss:
+            best_loss = loss
+            best_trans = init_trans.detach().cpu().numpy()[0]
+            best_pose = init_pose.detach().cpu().numpy()[0]
+            best_scale = init_scale.detach().cpu().numpy()[0]
+            current = 0
+        else:
+            current += 1
+
+        loss.backward()
+        optimizer.step()
+        scheduler.step(loss)
+
+        if epoch % verbose == 0:
+            print("Epoch ", epoch, "Loss: ", loss.detach().cpu().numpy(), "trans: ", best_trans, "pose: ", best_pose, "scale: ", best_scale)
+        if current > esr:
+            print("Early stopping at ", epoch)
+            break
+
+        del rigid_trans
+        torch.cuda.empty_cache()
+
+    optimized_source = bpy.context.scene.objects["OptimizedSource"]
+    optimized_source.location = (trans[0] + best_trans[0], trans[1] + best_trans[1], trans[2] + best_trans[2])
